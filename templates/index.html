@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://leaflet.github.io/Leaflet.heat/dist/leaflet-heat.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { --ph-orange: #ff9000; --ph-black: #121212; --ph-grey: #1e1e1e; }
+        body { background: var(--ph-black); color: white; margin: 0; font-family: sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; position: absolute; z-index: 1; }
+        .control-panel {
+            position: absolute; top: 10px; left: 10px;
+            width: calc(100% - 20px); max-width: 360px;
+            background: var(--ph-grey); z-index: 1000; border-radius: 15px;
+            padding: 15px; max-height: 85vh; overflow-y: auto;
+            border: 1px solid #333; transition: left 0.4s ease;
+        }
+        #toggle-btn {
+            position: absolute; right: -46px; top: 10px; background: var(--ph-grey);
+            width: 36px; height: 36px; border-radius: 10px; display: flex;
+            align-items: center; justify-content: center; color: var(--ph-orange);
+            cursor: pointer; border: 1px solid #333; font-size: 14px;
+        }
+        .ph-label { color: var(--ph-orange); font-weight: bold; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; display: block; }
+        .ph-input { background: #2b2b2b; border: 1px solid #444; border-radius: 8px; padding: 8px; width: 100%; color: white; margin-bottom: 12px; font-size: 13px; box-sizing: border-box; }
+        .ph-btn { background: var(--ph-orange); color: black; font-weight: bold; border-radius: 8px; padding: 10px; width: 100%; cursor: pointer; border: none; }
+        .utility-box { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; background: #252525; padding: 10px; border-radius: 8px; margin-bottom: 12px; font-size: 12px; }
+        .heatmap-controls { position: absolute; bottom: 30px; right: 20px; background: rgba(30,30,30,0.9); z-index: 1000; padding: 15px; border-radius: 10px; border: 1px solid #444; font-size: 12px; }
+        .room-card { background: #2b2b2b; padding: 10px; border-radius: 8px; margin-top: 8px; border-left: 4px solid var(--ph-orange); }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="panel" class="control-panel">
+        <div id="toggle-btn" onclick="togglePanel()">◀</div>
+        <h1 class="text-xl font-black italic text-[#ff9000] mb-4">VERTAHOME</h1>
+
+        <label class="ph-label">Campus UEH</label>
+        <select id="campus" class="ph-input">{{ campus_options | safe }}</select>
+
+        <label class="ph-label">Khu vực</label>
+        <select id="phuong_input" class="ph-input">{{ phuong_options | safe }}</select>
+
+        <div class="flex gap-2">
+            <div class="w-1/2"><label class="ph-label">Diện tích (m²)</label><input type="number" id="dien_tich" class="ph-input" value="20"></div>
+            <div class="w-1/2"><label class="ph-label">Số người ở tối đa</label><input type="number" id="so_nguoi" class="ph-input" value="2"></div>
+        </div>
+
+        <label class="ph-label">Bán kính: <span id="rad_val">2</span> km</label>
+        <input type="range" id="radius" min="0.5" max="15" step="0.5" value="2"
+               class="w-full mb-4" oninput="document.getElementById('rad_val').innerText=this.value">
+
+        <div class="utility-box">
+            <label><input type="checkbox" id="tu_do"> Tự do giờ giấc</label>
+            <label><input type="checkbox" id="cho_xe"> Chỗ để xe</label>
+            <label><input type="checkbox" id="aircon"> Điều hoà</label>
+            <label><input type="checkbox" id="wc"> WC riêng</label>
+            <label><input type="checkbox" id="kitchen"> Bếp riêng</label>
+            <label><input type="checkbox" id="bus"> Gần trạm xe Bus</label>
+        </div>
+
+        <div class="flex gap-2">
+            <button class="ph-btn" onclick="predict()">Dự đoán giá</button>
+            <button class="ph-btn" style="background:white" onclick="find()">Tìm trọ tương tự</button>
+        </div>
+        <div id="results-area" class="mt-4"></div>
+    </div>
+
+    <div class="heatmap-controls">
+        <p class="ph-label">Heatmap theo:</p>
+        <label class="block mt-1"><input type="checkbox" id="hm_general" onchange="toggleHeatmap('general')"> Giá trọ chung</label>
+        <label class="block mt-1"><input type="checkbox" id="hm_price" onchange="toggleHeatmap('price')"> Tầm giá dự đoán</label>
+        <label class="block mt-1"><input type="checkbox" id="hm_utility" onchange="toggleHeatmap('utility')"> Tiện ích đã chọn</label>
+    </div>
+
+    <script>
+    // ── DỮ LIỆU ĐƯỢC BACKEND BƠM VÀO ─────────────────────────────────────────────
+    const DB = {{ records | tojson }};
+    const CAMPUS_DATA = {{ campus_data | tojson }};
+    const MODEL_COEF = {{ coef | tojson }};
+    const MODEL_INTERCEPT = {{ intercept }};
+    const MODEL_ACCURACY = {{ accuracy }};
+    const FEATURE_COLS = {{ features | tojson }};
+    const MAX_PRICE = Math.max(...DB.map(r => r.gia_thue));
+
+    // ── MAP SETUP ─────────────────────────────────────────────────────────────
+    var map = L.map('map', {zoomControl: false}).setView([10.7626, 106.6601], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    var heatLayers = {};
+    var scanCircle = null;
+    var markerCampus = null;
+    var panelHidden = false;
+
+    function togglePanel() {
+        const panel = document.getElementById('panel');
+        const btn = document.getElementById('toggle-btn');
+        panelHidden = !panelHidden;
+        panel.style.left = panelHidden ? '-400px' : '10px';
+        btn.innerText = panelHidden ? '▶' : '◀';
+    }
+
+    // ── ĐỌC INPUT NGƯỜI DÙNG ──────────────────────────────────────────────────────
+    function getInputs() {
+        return {
+            dien_tich: parseFloat(document.getElementById('dien_tich').value) || 20,
+            so_nguoi_toidau: parseInt(document.getElementById('so_nguoi').value) || 2,
+            tu_do: document.getElementById('tu_do').checked ? 1 : 0,
+            cho_de_xe: document.getElementById('cho_xe').checked ? 1 : 0,
+            has_aircon: document.getElementById('aircon').checked ? 1 : 0,
+            has_private_wc: document.getElementById('wc').checked ? 1 : 0,
+            has_kitchen: document.getElementById('kitchen').checked ? 1 : 0,
+            has_bus: document.getElementById('bus').checked ? 1 : 0,
+            phuong_encoded: parseInt(document.getElementById('phuong_input').value),
+            has_market: 1
+        };
+    }
+
+    // ── THUẬT TOÁN PREDICT TỪ MODEL (CHẠY TRÊN TRÌNH DUYỆT) ────────────────────────
+    function predictPrice(inputs) {
+        let price = MODEL_INTERCEPT;
+        for (const col of FEATURE_COLS) {
+            price += (MODEL_COEF[col] || 0) * (inputs[col] || 0);
+        }
+        return Math.round(price / 1000) * 1000;
+    }
+
+    // ── TÍNH KHOẢNG CÁCH (KM) ───────────────────────────────────────────────
+    function haversine(lat1, lng1, lat2, lng2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 +
+                  Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    // ── BẤM DỰ ĐOÁN ────────────────────────────────────────────────────────
+    function predict() {
+        const inputs = getInputs();
+        const price = predictPrice(inputs);
+        document.getElementById('results-area').innerHTML = `
+            <div class="room-card text-center">
+                <p class="ph-label">Giá dự báo</p>
+                <b class="text-xl text-[#ff9000]">${price.toLocaleString('vi-VN')} VNĐ</b>
+                <p class="text-[10px] text-gray-500 mt-1">Độ chính xác mô hình: ${MODEL_ACCURACY}%</p>
+            </div>`;
+        if (document.getElementById('hm_price').checked) toggleHeatmap('price');
+    }
+
+    // ── VẼ HEATMAP ────────────────────────────────────────────────────────
+    function toggleHeatmap(type) {
+        if (!document.getElementById('hm_' + type).checked) {
+            if (heatLayers[type]) map.removeLayer(heatLayers[type]);
+            return;
+        }
+        const inputs = getInputs();
+        let points = [];
+
+        if (type === 'general') {
+            points = DB.map(r => [r.lat, r.lng, r.gia_thue / MAX_PRICE]);
+
+        } else if (type === 'price') {
+            const pred = predictPrice(inputs);
+            points = DB
+                .filter(r => r.gia_thue >= pred * 0.8 && r.gia_thue <= pred * 1.2)
+                .map(r => [r.lat, r.lng, 1.0]);
+
+        } else if (type === 'utility') {
+            const binCols = ['tu_do', 'cho_de_xe', 'has_aircon', 'has_private_wc', 'has_kitchen', 'has_bus'];
+            points = DB.map(r => {
+                const score = binCols.filter(c => r[c] === inputs[c]).length / binCols.length;
+                return [r.lat, r.lng, score];
+            });
+        }
+
+        if (heatLayers[type]) map.removeLayer(heatLayers[type]);
+        heatLayers[type] = L.heatLayer(points, {radius: 20, blur: 15}).addTo(map);
+    }
+
+    // ── BẤM TÌM TRỌ ─────────────────────────────────────────────────────
+    function find() {
+        const rad = parseFloat(document.getElementById('radius').value);
+        const cpName = document.getElementById('campus').value;
+        const cp = CAMPUS_DATA[cpName];
+        const inputs = getInputs();
+        const binCols = ['tu_do', 'cho_de_xe', 'has_aircon', 'has_private_wc', 'has_kitchen', 'has_bus'];
+
+        map.flyTo([cp.lat, cp.lng], 14);
+
+        if (scanCircle) map.removeLayer(scanCircle);
+        scanCircle = L.circle([cp.lat, cp.lng], {
+            radius: rad * 1000, color: '#ff9000', fillOpacity: 0.1
+        }).addTo(map);
+
+        if (markerCampus) map.removeLayer(markerCampus);
+        markerCampus = L.marker([cp.lat, cp.lng]).addTo(map)
+                        .bindPopup(`<b>${cpName}</b>`).openPopup();
+
+        const scored = [];
+        for (const r of DB) {
+            const dist = haversine(cp.lat, cp.lng, r.lat, r.lng);
+            if (dist > rad) continue;
+            const utilityMatch = binCols.filter(c => r[c] === inputs[c]).length / binCols.length;
+            const distScore = 1 - (dist / rad);
+            const diffPeople = Math.abs(r.so_nguoi_toidau - inputs.so_nguoi_toidau);
+            const peopleScore = Math.exp(-diffPeople / 2);
+            const totalScore = utilityMatch * 0.6 + distScore * 0.3 + peopleScore * 0.1;
+            scored.push({ ...r, dist_km: dist.toFixed(2), match_score: Math.round(totalScore * 100) });
+        }
+        scored.sort((a, b) => b.match_score - a.match_score);
+
+        const area = document.getElementById('results-area');
+        if (scored.length === 0) {
+            area.innerHTML = `
+                <div class="room-card text-center" style="border-left-color:#f87171">
+                    <p class="text-red-400 font-bold">Không tìm được phòng nào quanh ${cpName}</p>
+                    <p class="text-[10px] text-gray-400">Hãy thử mở rộng bán kính tìm kiếm.</p>
+                </div>`;
+            return;
+        }
+
+        let html = `<p class="ph-label mt-2">Tìm thấy ${scored.length} phòng xấp xỉ</p>`;
+        scored.forEach(r => {
+            const color = r.match_score > 80 ? '#4ade80' : (r.match_score > 50 ? '#ff9000' : '#f87171');
+            html += `
+                <div class="room-card" style="border-left-color:${color}">
+                    <div class="flex justify-between items-start">
+                        <b class="text-white">${r.gia_thue.toLocaleString('vi-VN')}đ</b>
+                        <span class="text-[10px] font-bold px-1 rounded" style="background:${color};color:black">
+                            MATCH: ${r.match_score}%
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 mt-1">
+                        ${r.dien_tich}m² | Cách trường: ${r.dist_km}km | Max: ${r.so_nguoi_toidau} người
+                    </p>
+                </div>`;
+        });
+        area.innerHTML = html;
+    }
+    </script>
+</body>
+</html>
