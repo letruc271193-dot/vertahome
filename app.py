@@ -22,12 +22,12 @@ CAMPUS_UEH = {
     "Campus ISB": {"lat": 10.783265584750298, "lng": 106.695181},
 }
 
-# Đọc file
+# Đọc file dữ liệu
 df = pd.read_csv(DATA_LINK)
 with open(JSON_LINK, 'r', encoding='utf-8') as f:
     LOCATION_MAP = json.load(f)
 
-# Ghép tọa độ
+# Ghép tọa độ vào dataset
 df['lat'] = df['phuong'].map(lambda x: LOCATION_MAP.get(x, {}).get('lat', 10.7626))
 df['lng'] = df['phuong'].map(lambda x: LOCATION_MAP.get(x, {}).get('lng', 106.6601))
 
@@ -56,7 +56,6 @@ phuong_options = "".join([
 # --- 2. CUNG CẤP GIAO DIỆN ---
 @app.route('/')
 def index():
-    # Đẩy toàn bộ AI logic và Database sang cho giao diện hiển thị
     return render_template('index.html',
                            records=records,
                            campus_data=CAMPUS_UEH,

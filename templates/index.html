@@ -10,19 +10,41 @@
         :root { --ph-orange: #ff9000; --ph-black: #121212; --ph-grey: #1e1e1e; }
         body { background: var(--ph-black); color: white; margin: 0; font-family: sans-serif; overflow: hidden; }
         #map { height: 100vh; width: 100vw; position: absolute; z-index: 1; }
+        
         .control-panel {
-            position: absolute; top: 10px; left: 10px;
-            width: calc(100% - 20px); max-width: 360px;
-            background: var(--ph-grey); z-index: 1000; border-radius: 15px;
-            padding: 15px; max-height: 85vh; overflow-y: auto;
-            border: 1px solid #333; transition: left 0.4s ease;
+            position: absolute;
+            top: 60px;
+            left: 10px;
+            width: calc(100% - 20px);
+            max-width: 360px;
+            background: var(--ph-grey);
+            z-index: 1000;
+            border-radius: 15px;
+            padding: 15px;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 1px solid #333;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
+        
         #toggle-btn {
-            position: absolute; right: -46px; top: 10px; background: var(--ph-grey);
-            width: 36px; height: 36px; border-radius: 10px; display: flex;
-            align-items: center; justify-content: center; color: var(--ph-orange);
-            cursor: pointer; border: 1px solid #333; font-size: 14px;
+            position: absolute;
+            left: 10px;
+            top: 10px;
+            background: var(--ph-grey);
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--ph-orange);
+            cursor: pointer;
+            border: 1px solid #333;
+            font-size: 18px;
+            z-index: 1001;
         }
+        
         .ph-label { color: var(--ph-orange); font-weight: bold; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; display: block; }
         .ph-input { background: #2b2b2b; border: 1px solid #444; border-radius: 8px; padding: 8px; width: 100%; color: white; margin-bottom: 12px; font-size: 13px; box-sizing: border-box; }
         .ph-btn { background: var(--ph-orange); color: black; font-weight: bold; border-radius: 8px; padding: 10px; width: 100%; cursor: pointer; border: none; }
@@ -33,8 +55,9 @@
 </head>
 <body>
     <div id="map"></div>
+    <div id="toggle-btn" onclick="togglePanel()">◀</div> 
+    
     <div id="panel" class="control-panel">
-        <div id="toggle-btn" onclick="togglePanel()">◀</div>
         <h1 class="text-xl font-black italic text-[#ff9000] mb-4">VERTAHOME</h1>
 
         <label class="ph-label">Campus UEH</label>
@@ -76,7 +99,7 @@
     </div>
 
     <script>
-    // ── DỮ LIỆU ĐƯỢC BACKEND BƠM VÀO ─────────────────────────────────────────────
+    // ── NẠP KIẾN THỨC TỪ BACKEND VÀO GIAO DIỆN ─────────────────────────────
     const DB = {{ records | tojson }};
     const CAMPUS_DATA = {{ campus_data | tojson }};
     const MODEL_COEF = {{ coef | tojson }};
@@ -85,7 +108,7 @@
     const FEATURE_COLS = {{ features | tojson }};
     const MAX_PRICE = Math.max(...DB.map(r => r.gia_thue));
 
-    // ── MAP SETUP ─────────────────────────────────────────────────────────────
+    // ── THIẾT LẬP MAP ───────────────────────────────────────────────────────
     var map = L.map('map', {zoomControl: false}).setView([10.7626, 106.6601], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
@@ -94,15 +117,23 @@
     var markerCampus = null;
     var panelHidden = false;
 
+    // Hiệu ứng đóng/mở panel xịn sò
     function togglePanel() {
         const panel = document.getElementById('panel');
         const btn = document.getElementById('toggle-btn');
         panelHidden = !panelHidden;
-        panel.style.left = panelHidden ? '-400px' : '10px';
-        btn.innerText = panelHidden ? '▶' : '◀';
+
+        if (panelHidden) {
+            panel.style.left = '-400px';
+            panel.style.opacity = '0';
+            btn.innerText = '▶';
+        } else {
+            panel.style.left = '10px';
+            panel.style.opacity = '1';
+            btn.innerText = '◀';
+        }
     }
 
-    // ── ĐỌC INPUT NGƯỜI DÙNG ──────────────────────────────────────────────────────
     function getInputs() {
         return {
             dien_tich: parseFloat(document.getElementById('dien_tich').value) || 20,
@@ -118,7 +149,7 @@
         };
     }
 
-    // ── THUẬT TOÁN PREDICT TỪ MODEL (CHẠY TRÊN TRÌNH DUYỆT) ────────────────────────
+    // AI Dự đoán giá trực tiếp trên trình duyệt
     function predictPrice(inputs) {
         let price = MODEL_INTERCEPT;
         for (const col of FEATURE_COLS) {
@@ -127,7 +158,6 @@
         return Math.round(price / 1000) * 1000;
     }
 
-    // ── TÍNH KHOẢNG CÁCH (KM) ───────────────────────────────────────────────
     function haversine(lat1, lng1, lat2, lng2) {
         const R = 6371;
         const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -137,7 +167,6 @@
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    // ── BẤM DỰ ĐOÁN ────────────────────────────────────────────────────────
     function predict() {
         const inputs = getInputs();
         const price = predictPrice(inputs);
@@ -150,7 +179,6 @@
         if (document.getElementById('hm_price').checked) toggleHeatmap('price');
     }
 
-    // ── VẼ HEATMAP ────────────────────────────────────────────────────────
     function toggleHeatmap(type) {
         if (!document.getElementById('hm_' + type).checked) {
             if (heatLayers[type]) map.removeLayer(heatLayers[type]);
@@ -161,13 +189,11 @@
 
         if (type === 'general') {
             points = DB.map(r => [r.lat, r.lng, r.gia_thue / MAX_PRICE]);
-
         } else if (type === 'price') {
             const pred = predictPrice(inputs);
             points = DB
                 .filter(r => r.gia_thue >= pred * 0.8 && r.gia_thue <= pred * 1.2)
                 .map(r => [r.lat, r.lng, 1.0]);
-
         } else if (type === 'utility') {
             const binCols = ['tu_do', 'cho_de_xe', 'has_aircon', 'has_private_wc', 'has_kitchen', 'has_bus'];
             points = DB.map(r => {
@@ -180,7 +206,6 @@
         heatLayers[type] = L.heatLayer(points, {radius: 20, blur: 15}).addTo(map);
     }
 
-    // ── BẤM TÌM TRỌ ─────────────────────────────────────────────────────
     function find() {
         const rad = parseFloat(document.getElementById('radius').value);
         const cpName = document.getElementById('campus').value;
